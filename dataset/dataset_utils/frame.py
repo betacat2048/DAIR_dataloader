@@ -71,7 +71,7 @@ class VICFrame(Frame):
         self.inf_frame = inf_frame
         self.time_diff = time_diff
 
-        self.coords = CoordTransformation_xkc(
+        self.coords: CoordTransformation_xkc = CoordTransformation_xkc(
             self.path,
             self.inf_frame,
             self.veh_frame,

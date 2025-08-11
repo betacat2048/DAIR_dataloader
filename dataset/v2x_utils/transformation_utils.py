@@ -1,3 +1,5 @@
+from typing import Callable
+
 import numpy as np
 import pathlib
 import json
@@ -57,22 +59,30 @@ def draw_bboxes_points_and_wireframe(
         segments = np.stack([pts2d[..., EDGES[:, 0], :], pts2d[..., EDGES[:, 1], :]], axis=-2)
 
         from matplotlib.collections import LineCollection
-        lc = LineCollection(segments.reshape(-1, 2, 2), linewidths=line_width, colors='r')  # 与点的红色一致
+        lc = LineCollection(segments.reshape(-1, 2, 2), linewidths=line_width, colors='r')
         ax.add_collection(lc)
 
 
-        # p1 = uv[:, EDGES[:, 0], :]  # (N, 12, 2)
-        # p2 = uv[:, EDGES[:, 1], :]  # (N, 12, 2)
-        # evalid = valid[:, EDGES].all(axis=-1)  # 每条边两端都有效 -> (N, 12)
-        #
-        # from matplotlib.collections import LineCollection
-        #
-        # if evalid.any():
-        #     segments = np.stack([p1, p2], axis=2)  # (N, 12, 2, 2)
-        #     segments = segments.reshape(-1, 2, 2)[evalid.reshape(-1)]  # (E, 2, 2)
-        #
-        #     lc = LineCollection(segments, linewidths=line_width, colors='r')  # 与点的红色一致
-        #     ax.add_collection(lc)
+def polar_decompose_RS(M: np.ndarray, *, tol: float = 1e-12) -> tuple[np.ndarray, np.ndarray]:
+    """
+    M = R @ S
+    """
+    # SVD: M = U Σ V^T
+    U, s, Vt = np.linalg.svd(M, full_matrices=False)
+    V = Vt.T
+
+    # Compute R = U V^T, ensure det(R) = +1 by flipping one axis if needed
+    R = U @ Vt
+    if np.linalg.det(R) < 0:
+        U[:, -1] *= -1.0  # Flip the last column of U
+        s[-1] *= -1.0  # Keep M = U Σ V^T identity
+        R = U @ Vt
+
+    # Compute S = V Σ V^T, ensure non-negative singular values
+    s_pos = np.maximum(s, tol)
+    S = (V * s_pos) @ V.T  # Equivalent to V @ diag(s_pos) @ V^T
+
+    return R, S
 
 
 class CoordTransformation_xkc:
@@ -97,14 +107,23 @@ class CoordTransformation_xkc:
         self.coord_system.add('inf_lidar', 'inf', Transform.from_rot(Quaternion.from_euler(np.array(-90), np.array(0), np.array(0))))
         self.coord_system.add('veh_lidar', 'veh', Transform.from_rot(Quaternion.from_euler(np.array(-90), np.array(0), np.array(0))))
 
-        self.coord_system.add('inf_lidar', 'inf_cam', self.load_transform_from_json(self.path_root / 'infrastructure-side' / self.inf_frame['calib_virtuallidar_to_camera_path']).inverse())
+        inf_cam2lidar_trans, inf_cam2lidar_scale = self.load_transform_from_json(self.path_root / 'infrastructure-side' / self.inf_frame['calib_virtuallidar_to_camera_path'], allow_scale=True)
+        self.inf_lidar2cam_scale = 1 / inf_cam2lidar_scale
+        self.inf_lidar2cam_trans = inf_cam2lidar_trans.inverse()
+        # self.coord_system.add('inf_lidar', 'inf_cam', inf_cam2lidar_trans.inverse())
         self.coord_system.add('veh_lidar', 'veh_cam', self.load_transform_from_json(self.path_root / 'vehicle-side' / self.veh_frame['calib_lidar_to_camera_path']).inverse())
+
+    def inf_lidar2cam(self, x: np.ndarray) -> np.ndarray:
+        return self.inf_lidar2cam_scale * self.inf_lidar2cam_trans(x)
+
+    def inf_cam2lidar(self, x: np.ndarray) -> np.ndarray:
+        return self.inf_lidar2cam_trans.inverse()(x / self.inf_lidar2cam_scale)
 
     @staticmethod
     def _to_transform(rot_matrix: np.ndarray, translation: np.ndarray) -> Transform:
-        return Transform(np.concatenate([Quaternion.from_matrix(rot_matrix).q, translation], axis=-1))
+        return Transform.from_rot_trans(Quaternion.from_matrix(rot_matrix), translation)
 
-    def load_transform_from_json(self, path: pathlib.Path, apply_delta: bool = False, key: str | None = None) -> Transform:
+    def load_transform_from_json(self, path: pathlib.Path, apply_delta: bool = False, key: str | None = None, allow_scale: bool = False) -> Transform | tuple[Transform, np.ndarray]:
         """Load Transform from JSON. If apply_delta=True, adjust translation by delta_x, delta_y."""
         with path.open("r") as f:
             data = json.load(f)
@@ -118,8 +137,26 @@ class CoordTransformation_xkc:
             delta_y = data.get("relative_error", {}).get("delta_y", 0) or 0
             translation += np.array([delta_x, delta_y, 0])
 
-        return self._to_transform(rot_matrix, translation)
+        if allow_scale:
+            R, S = polar_decompose_RS(np.array(data["rotation"]))
+            return self._to_transform(R, translation), np.diag(S)
+        else:
+            if abs((matrix_det := np.linalg.det(rot_matrix)) - 1) > 1e-5:
+                raise RuntimeError(f"Rotation matrix in {path} has det {matrix_det}, not 1")
+            return self._to_transform(rot_matrix, translation)
 
     def __getitem__(self, key: tuple[str, str]) -> Transform | None:
         parent, child = key
         return self.coord_system[parent, child]
+
+    def __call__(self, parent: str, child: str) -> Callable[[np.ndarray], np.ndarray]:
+        def apply(x: np.ndarray) -> np.ndarray:
+            match (parent, child):
+                case ('inf_cam', _):
+                    return self.inf_cam2lidar(self['inf_lidar', child](x))
+                case (_, 'inf_cam'):
+                    return self[parent, 'inf_lidar'](self.inf_lidar2cam(x))
+                case _, _:
+                    return self[parent, child](x)
+
+        return apply

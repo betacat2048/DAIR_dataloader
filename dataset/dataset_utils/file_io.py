@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 from PIL import Image
 
+
 def load_json(path):
     with open(path, mode="r") as f:
         data = json.load(f)

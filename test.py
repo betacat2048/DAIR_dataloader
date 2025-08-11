@@ -88,7 +88,6 @@ class VICDataset(torch.utils.data.Dataset):
             filter_world = None if extended_range is None else RectFilter(vic_frame.coords['world', 'veh_lidar'](extended_range).squeeze(axis=0))
             label_v = Label(self.path / elem["cooperative_label_path"], rot_recompense=vic_frame.coords['world', 'veh_lidar'].R, label_filter=filter_world)
             # label_v = Label(self.path / 'infrastructure-side/label/virtuallidar/' / f"{inf_frame.id['lidar']}.json", world2label=vic_frame.coords['world', 'inf_lidar'], rot_recompense=None, label_filter=filter_world)
-            # label_v = Label(self.path / 'infrastructure-side/label/camera/' / f"{inf_frame.id['camera']}.json", world2label=vic_frame.coords['world', 'inf_cam'], rot_recompense=None, label_filter=filter_world)
 
             if vic_frame.check_data_files():
                 self.data.append((vic_frame, label_v,))
@@ -116,19 +115,15 @@ if __name__ == "__main__":
     )
 
     for vic_frame, label in dair_dataset:
-        EDGES = np.array([
-            [0, 1], [1, 3], [3, 2], [2, 0],
-            [4, 5], [5, 7], [7, 6], [6, 4],
-            [0, 4], [1, 5], [2, 6], [3, 7]
-        ], dtype=np.int32)
         bbox_pts = get_3d_8points(label['boxes_dim'], Transform(label['boxes_pose']))
+        # bbox_pts = label['boxes_corners']
 
         _, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(30, 12))
 
         ax2.plot(*vic_frame.coords['world', 'veh_cam'](np.array([[0, 0, 0], [10, 0, 10], [-10, 0, 10], [0, 0, 0]]))[..., :2].T, 'r-', label='Vehicle')
         ax2.plot(*vic_frame.coords['world', 'veh_cam'].t[:2], 'ro')
-        ax2.plot(*vic_frame.coords['world', 'inf_cam'](np.array([[0, 0, 0], [10, 0, 10], [-10, 0, 10], [0, 0, 0]]))[..., :2].T, 'b-', label='Infrastructure')
-        ax2.plot(*vic_frame.coords['world', 'inf_cam'].t[:2], 'bo')
+        ax2.plot(*vic_frame.coords('world', 'inf_cam')(np.array([[0, 0, 0], [10, 0, 10], [-10, 0, 10], [0, 0, 0]]))[..., :2].T, 'b-', label='Infrastructure')
+        ax2.plot(*vic_frame.coords('world', 'inf_cam')(np.zeros(3))[:2], 'bo')
         for tag in Transform(label['boxes_pose'][..., None, :])(np.array([[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, -1, 0], [-1, -1, 0], [-1, 1, 0], [0, 1, 0]]) * label['boxes_dim'][..., None, :])[..., :2]:
             ax2.plot(*tag.T, 'c-')
         ax2.set_aspect('equal')
@@ -138,7 +133,8 @@ if __name__ == "__main__":
         img, K, (h, w) = vic_frame.veh_frame.image()
         ax3.imshow(img)
 
-        p = K @ vic_frame.coords['veh_cam', 'inf_cam'].t
+        vic_frame: VICFrame
+        p = K @ vic_frame.coords('world', 'inf_cam')(np.zeros(3))
         p = (p[..., :2] / p[..., 2:])[(p[..., 2] > 0)]
         p = p[(-0.2 * w < p[..., 0]) & (p[..., 0] < 1.2 * w) & (-0.2 * h < p[..., 1]) & (p[..., 1] < 1.2 * h)]
         ax3.plot(*p.T, 'rx')
@@ -149,12 +145,12 @@ if __name__ == "__main__":
         img, K, (h, w) = vic_frame.inf_frame.image()
         ax1.imshow(img)
 
-        p = K @ vic_frame.coords['inf_cam', 'veh_cam'].t
+        p = K @ vic_frame.coords('inf_cam', 'veh_cam')(np.zeros(3))
         p = (p[..., :2] / p[..., 2:])[(p[..., 2] > 0)]
         p = p[(-0.2 * w < p[..., 0]) & (p[..., 0] < 1.2 * w) & (-0.2 * h < p[..., 1]) & (p[..., 1] < 1.2 * h)]
         ax1.plot(*p.T, 'rx')
 
-        draw_bboxes_points_and_wireframe(vic_frame.coords['inf_cam', 'world'](bbox_pts), K, ax1, w, h)
+        draw_bboxes_points_and_wireframe(vic_frame.coords('inf_cam', 'world')(bbox_pts), K, ax1, w, h)
 
         plt.show()
 
