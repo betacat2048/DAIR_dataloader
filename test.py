@@ -86,8 +86,8 @@ class VICDataset(torch.utils.data.Dataset):
 
             # get the labels
             filter_world = None if extended_range is None else RectFilter(vic_frame.coords['world', 'veh_lidar'](extended_range).squeeze(axis=0))
-            label_v = Label(self.path / elem["cooperative_label_path"], rot_recompense=vic_frame.coords['world', 'veh_lidar'].R, label_filter=filter_world)
-            # label_v = Label(self.path / 'infrastructure-side/label/virtuallidar/' / f"{inf_frame.id['lidar']}.json", world2label=vic_frame.coords['world', 'inf_lidar'], rot_recompense=None, label_filter=filter_world)
+            # label_v = Label(self.path / elem["cooperative_label_path"], rot_recompense=vic_frame.coords['world', 'veh_lidar'].R, label_filter=filter_world)
+            label_v = Label(self.path / 'infrastructure-side/label/virtuallidar/' / f"{inf_frame.id['lidar']}.json", world2label=vic_frame.coords['world', 'inf_lidar'], rot_recompense=None, label_filter=filter_world)
 
             if vic_frame.check_data_files():
                 self.data.append((vic_frame, label_v,))

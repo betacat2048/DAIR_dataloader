@@ -21,7 +21,7 @@ class Label(dict):
             dim = label["3d_dimensions"]
             dim = np.array([float(dim["w"]), float(dim["l"]), float(dim["h"])])  # (x, y, z) <==> (w, l, h)
 
-            rot = Quaternion.from_euler(*(np.rad2deg(np.array([float(label.get("rotation", np.nan)), 0, 0])) + np.array([90, 0, 0])))  # the rot of target (add 90 in yaw as different definition of vehicle coord)
+            rot = Quaternion.from_euler(*(np.rad2deg(np.array([float(label.get("rotation", np.nan)), 0, 0])) - np.array([90, 0, 0])))  # the rot of target (add 90 in yaw as different definition of vehicle coord)
             if rot_recompense is not None:
                 rot = rot_recompense * rot
 
